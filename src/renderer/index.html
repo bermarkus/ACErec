@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ACErec - EEG Acquisition</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <h1>ACErec</h1>
+      <div class="status-bar">
+        <div class="status-item">
+          <span class="status-label">Device:</span>
+          <span id="device-status" class="status-value">Not connected</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Recording:</span>
+          <span id="recording-status" class="status-value">Not recording</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Duration:</span>
+          <span id="recording-duration" class="status-value">00:00:00</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-content">
+      <section class="control-panel">
+        <div class="panel-section">
+          <h2>Device Connection</h2>
+          <div class="form-group">
+            <label for="device-select">Select Device:</label>
+            <select id="device-select">
+              <option value="" disabled selected>No devices found</option>
+            </select>
+            <button id="refresh-devices-btn">Refresh</button>
+          </div>
+          <div class="form-group">
+            <button id="connect-btn" disabled>Connect</button>
+            <button id="disconnect-btn" disabled>Disconnect</button>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h2>Recording</h2>
+          <div class="form-group">
+            <label for="subject-id">Subject ID:</label>
+            <input type="text" id="subject-id" placeholder="Enter subject ID">
+          </div>
+          <div class="form-group">
+            <label for="recording-id">Recording ID:</label>
+            <input type="text" id="recording-id" placeholder="Enter recording ID">
+          </div>
+          <div class="form-group">
+            <label for="save-location">Save Location:</label>
+            <div class="file-input-group">
+              <input type="text" id="save-location" placeholder="Choose save location" readonly>
+              <button id="browse-btn">Browse</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <button id="start-recording-btn" disabled>Start Recording</button>
+            <button id="stop-recording-btn" disabled>Stop Recording</button>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h2>Configuration</h2>
+          <div class="form-group">
+            <label for="sampling-rate">Sampling Rate (Hz):</label>
+            <select id="sampling-rate">
+              <option value="250">250</option>
+              <option value="500">500</option>
+              <option value="1000">1000</option>
+              <option value="2000">2000</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="visualization-panel">
+        <h2>EEG Visualization</h2>
+        <div id="eeg-visualization" class="visualization-container">
+          <div class="placeholder-message">
+            Connect to a device to view EEG data
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>ACErec - FreeEEG32 Acquisition Tool</p>
+    </footer>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="channel-count">Number of Channels:</label>
+          <input type="number" id="channel-count" min="1" max="32" value="32">
+        </div>
+        <div class="form-group">
+          <label for="auto-save">Auto-save recordings:</label>
+          <input type="checkbox" id="auto-save">
+        </div>
+        <div class="form-group">
+          <label for="default-save-location">Default Save Location:</label>
+          <div class="file-input-group">
+            <input type="text" id="default-save-location" readonly>
+            <button id="browse-default-location-btn">Browse</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="save-settings-btn">Save Settings</button>
+        <button id="cancel-settings-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- About Modal -->
+  <div id="about-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>About ACErec</h2>
+        <button class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>ACErec is an EEG acquisition tool designed for FreeEEG32 devices.</p>
+        <p>It uses Brainflow for device communication and saves data in BDF format.</p>
+        <p>Version: 0.1.0</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+{
+  "name": "acerec",
+  "productName": "ACErec",
+  "version": "0.1.0",
+  "description": "EEG acquisition client for FreeEEG32 using Brainflow with BDF export",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac"
+  },
+  "keywords": [
+    "EEG",
+    "BDF",
+    "Brainflow",
+    "FreeEEG32",
+    "Neuroscience"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "brainflow": "^5.0.0",
+    "electron-log": "^4.4.8",
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1"
+  },
+  "devDependencies": {
+    "electron": "^23.1.4",
+    "electron-builder": "^23.6.0"
+  },
+  "build": {
+    "appId": "com.acerec.app",
+    "productName": "ACErec",
+    "files": [
+      "src/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "resources"
+    },
+    "mac": {
+      "category": "public.app-category.medical",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "zip"]
+    }
+  }
+}
