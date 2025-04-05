@@ -152,7 +152,8 @@ async function connectDevice() {
     // Set up connection parameters
     const connectionParams = {
       samplingRate: parseInt(elements.samplingRateSelect.value),
-      channelCount: appState.settings.channelCount
+      channelCount: appState.settings.channelCount,
+      name: appState.selectedDevice.name // Pass the device name for board type identification
     };
     
     // Connect to the device
