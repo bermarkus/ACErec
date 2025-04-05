@@ -19,9 +19,20 @@ class BDFWriter {
     this.duration = options.duration || -1; // Will be calculated based on data
     
     // BDF specific parameters
-    this.fileVersion = '0       '; // 8 chars, version of data format
-    this.dataFormat = '24BIT'; // 24-bit format identifier (used in reserved field)
-    this.dataRecordDuration = 1; // in seconds
+    // For EDFbrowser compatibility, we'll use standard ASCII format
+    this.isBDFPlus = options.isBDFPlus || false; // Whether to use BDF+ format
+    this.fileVersion = '0       '; // 8 chars, standard EDF/BDF version
+    this.isContinuous = options.isContinuous !== false; // Default to continuous recording
+    this.dataRecordDuration = 1; // in seconds, fixed at 1 second per data record
+    
+    // Allow explicit setting of data records (critical for correct file size)
+    if (options.dataRecords && Number.isInteger(options.dataRecords)) {
+      this.dataRecords = options.dataRecords;
+      this.dataRecordsExplicitlySet = true; // Flag to prevent recalculation
+    } else {
+      this.dataRecords = 1; // Default to 1 data record if not specified
+      this.dataRecordsExplicitlySet = false;
+    }
     
     // Internal state
     this.fileHandle = null;
@@ -72,6 +83,13 @@ class BDFWriter {
     this.filename = filename;
     this.fileHandle = fs.openSync(filename, 'w');
     
+    // Calculate samples per record: sampling rate * record duration (typically 1s)
+    this.samplesPerRecord = Math.floor(this.samplingRate * this.dataRecordDuration);
+    
+    // Calculate the size of one data record in bytes (all channels combined)
+    // For each channel: samplesPerRecord * 3 bytes (24-bit BDF format)
+    this.dataRecordSize = this.channels.length * (this.samplesPerRecord * 3);
+    
     // Write placeholder for the header (will be updated when closing the file)
     const placeholderHeader = Buffer.alloc(this.headerSize, ' ');
     fs.writeSync(this.fileHandle, placeholderHeader);
@@ -110,20 +128,22 @@ class BDFWriter {
       
       // Convert and write each sample for this channel (24-bit little-endian)
       for (let s = 0; s < numSamples; s++) {
-        // Convert physical value to digital value (24-bit)
+        // Convert physical value to digital value (16-bit compatible for EDFbrowser)
         const physRange = channel.physicalMax - channel.physicalMin;
         const digRange = channel.digitalMax - channel.digitalMin;
         const digitalValue = Math.round(
           ((data[c][s] - channel.physicalMin) / physRange) * digRange + channel.digitalMin
         );
         
-        // Ensure value is within 24-bit range (-8388608 to 8388607)
-        const clampedValue = Math.max(-8388608, Math.min(8388607, digitalValue));
+        // Ensure value is within 16-bit range (-32768 to 32767)
+        const clampedValue = Math.max(-32768, Math.min(32767, digitalValue));
         
-        // Write 24-bit value as 3 bytes in little-endian format
+        // For BDF format, we still need to write 3 bytes (24-bit storage)
+        // but we'll ensure the value stays within 16-bit range
+        // Write as little-endian: first 2 bytes contain the 16-bit value, 3rd byte is 0
         buffer.writeUInt8(clampedValue & 0xFF, offset);
         buffer.writeUInt8((clampedValue >> 8) & 0xFF, offset + 1);
-        buffer.writeUInt8((clampedValue >> 16) & 0xFF, offset + 2);
+        buffer.writeUInt8(0, offset + 2); // Most significant byte is always 0 for 16-bit values
         offset += 3;
       }
     }
@@ -144,12 +164,39 @@ class BDFWriter {
       throw new Error('No file is open for writing');
     }
     
-    const samplesPerRecord = this.samplingRate * this.dataRecordDuration;
+    // Make sure we have valid data
+    if (!samples || !Array.isArray(samples) || samples.length === 0 || 
+        !Array.isArray(samples[0]) || samples[0].length === 0) {
+      throw new Error('Invalid samples array provided to writeSamples');
+    }
     
-    // If samples array can't be evenly divided into records, adjust the last record
-    for (let i = 0; i < samples[0].length; i += samplesPerRecord) {
-      const end = Math.min(i + samplesPerRecord, samples[0].length);
-      const recordData = samples.map(channel => channel.slice(i, end));
+    // Calculate samples per record based on sampling rate and duration
+    const samplesPerRecord = Math.floor(this.samplingRate * this.dataRecordDuration);
+    
+    // Determine how many full data records we can write
+    const totalFullRecords = Math.floor(samples[0].length / samplesPerRecord);
+    
+    // Write full records first
+    for (let i = 0; i < totalFullRecords; i++) {
+      const start = i * samplesPerRecord;
+      const end = start + samplesPerRecord;
+      const recordData = samples.map(channel => channel.slice(start, end));
+      this.writeDataRecord(recordData);
+    }
+    
+    // Handle remaining samples if any (partial record)
+    const remainingSamples = samples[0].length % samplesPerRecord;
+    if (remainingSamples > 0) {
+      const start = totalFullRecords * samplesPerRecord;
+      const recordData = samples.map(channel => {
+        // Get remaining samples and pad if needed
+        const partialData = channel.slice(start);
+        // If we need to pad to match samplesPerRecord, duplicate the last sample
+        while (partialData.length < samplesPerRecord) {
+          partialData.push(partialData[partialData.length - 1] || 0);
+        }
+        return partialData;
+      });
       this.writeDataRecord(recordData);
     }
     
@@ -164,8 +211,8 @@ class BDFWriter {
     const headerBuffer = Buffer.alloc(this.headerSize, ' ');
     let offset = 0;
     
-    // 8 bytes: Version
-    headerBuffer.write(this.fileVersion, offset, 8); 
+    // 8 bytes: Version - using standard ASCII for compatibility
+    headerBuffer.write(this.fileVersion, offset, 8);
     offset += 8;
     
     // 80 bytes: Local patient identification
@@ -199,10 +246,8 @@ class BDFWriter {
     headerBuffer.write(this.headerSize.toString().padEnd(8, ' '), offset, 8);
     offset += 8;
     
-    // 44 bytes: Reserved field - for BDF format, should begin with "24BIT"
-    // The first 8 bytes should identify the data format (24BIT for BDF)
-    // The rest should be reserved/empty (spaces)
-    headerBuffer.write('24BIT   '.padEnd(44, ' '), offset, 44);
+    // 44 bytes: Reserved field - According to EDF specification, this should be blank (spaces)
+    headerBuffer.write(''.padEnd(44, ' '), offset, 44);
     offset += 44;
     
     // 8 bytes: Number of data records
@@ -269,8 +314,8 @@ class BDFWriter {
     
     // NS * 8 bytes: Number of samples per record
     for (const channel of this.channels) {
-      const samplesPerRecord = (this.samplingRate * this.dataRecordDuration).toString();
-      headerBuffer.write(samplesPerRecord.padEnd(8, ' '), offset, 8);
+      // Use the precalculated samplesPerRecord to ensure consistency
+      headerBuffer.write(this.samplesPerRecord.toString().padEnd(8, ' '), offset, 8);
       offset += 8;
     }
     
@@ -284,19 +329,75 @@ class BDFWriter {
   }
   
   /**
-   * Closes the BDF file, writing the header
+   * Calculates and ensures the data record count exactly matches file contents
+   * @private
+   */
+  _calculateExactDataRecords() {
+    // Get current file size
+    const stats = fs.fstatSync(this.fileHandle);
+    const actualFileSize = stats.size;
+    
+    // Calculate data portion size (file size minus header)
+    const dataSize = actualFileSize - this.headerSize;
+    
+    // Calculate exact number of data records that would fit in the data size
+    // This needs to be an integer value for BDF format compliance
+    return Math.floor(dataSize / this.dataRecordSize);
+  }
+  
+  /**
+   * Closes the BDF file, writing the header with accurate information
    */
   close() {
     if (!this.fileHandle) {
       throw new Error('No file is open for closing');
     }
     
+    // Skip recalculating data records if explicitly set during initialization
+    // This is important to maintain the exact file size for compatibility
+    if (!this.dataRecordsExplicitlySet) {
+      // Only calculate based on file size if not explicitly set
+      const exactDataRecords = this._calculateExactDataRecords();
+      this.dataRecords = Math.max(1, exactDataRecords);
+    }
+
+    // Calculate what the file size should be according to header information
+    const expectedDataSize = this.dataRecords * this.dataRecordSize;
+    const expectedFileSize = this.headerSize + expectedDataSize;
+    
+    // Get the actual current file size
+    const stats = fs.fstatSync(this.fileHandle);
+    const actualFileSize = stats.size;
+    
+    // If actual file size doesn't match expected (according to header), adjust the file size
+    if (actualFileSize !== expectedFileSize) {
+      // Truncate or extend the file to match expected size exactly
+      fs.ftruncateSync(this.fileHandle, expectedFileSize);
+    }
+    
     // Write the header with updated information
     this._writeHeader();
+    
+    // Force a file sync to ensure all changes are written
+    fs.fsyncSync(this.fileHandle);
     
     // Close the file
     fs.closeSync(this.fileHandle);
     this.fileHandle = null;
+    
+    // Double-check file size after closing
+    // This is a validation step to confirm our file size matches what we expect
+    try {
+      const finalStats = fs.statSync(this.filename);
+      const finalSize = finalStats.size;
+      const expectedSize = this.headerSize + (this.dataRecords * this.dataRecordSize);
+      
+      if (finalSize !== expectedSize) {
+        console.error(`BDF file size verification failed: Expected ${expectedSize} bytes but got ${finalSize} bytes`);
+      }
+    } catch (error) {
+      console.error(`Error verifying final file size: ${error.message}`);
+    }
     
     return this;
   }

@@ -450,6 +450,42 @@ class BrainflowDataHandler {
         log.warn('No recording start time found, using current time');
         this.recordingStartTime = new Date();
       }
+      
+      // Calculate actual recording duration in seconds
+      const recordingEndTime = new Date();
+      const recordingDurationMs = recordingEndTime - this.recordingStartTime;
+      const recordingDurationSec = Math.max(1, Math.floor(recordingDurationMs / 1000));
+      log.info(`Recording duration: ${recordingDurationSec} seconds`);
+      
+      // For BDF compatibility, ensure sample count divides evenly into data records
+      // Each data record contains samplingRate samples (for 1-second data records)
+      const samplesPerRecord = this.samplingRate; // 1 second of data per record
+      
+      // Calculate how many complete data records we need
+      const totalDataRecords = Math.max(1, Math.ceil(recordingDurationSec));
+      log.info(`Using ${totalDataRecords} data records for BDF file`);
+      
+      // Calculate total sample count based on complete data records
+      const exactSampleCount = totalDataRecords * samplesPerRecord;
+      log.info(`Adjusting to ${exactSampleCount} samples (${totalDataRecords} seconds) for BDF format compatibility`);
+      
+      // Now adjust the data to have exactly the right number of samples
+      if (eegData[0].length < exactSampleCount) {
+        log.info(`Padding data to match exact record count (${eegData[0].length} → ${exactSampleCount} samples)`);
+        eegData = eegData.map(channel => {
+          const paddedChannel = [...channel];
+          // Pad with the last sample value, or zero if no samples
+          const padValue = channel.length > 0 ? channel[channel.length - 1] : 0;
+          while (paddedChannel.length < exactSampleCount) {
+            paddedChannel.push(padValue);
+          }
+          return paddedChannel;
+        });
+      } else if (eegData[0].length > exactSampleCount) {
+        log.info(`Trimming data to match exact record count (${eegData[0].length} → ${exactSampleCount} samples)`);
+        // Trim data to match exact number of samples needed
+        eegData = eegData.map(channel => channel.slice(0, exactSampleCount));
+      }
 
       // Create BDF file with timestamp
       const timestamp = this.recordingStartTime.toISOString().replace(/[:.]/g, '-');
@@ -468,8 +504,9 @@ class BrainflowDataHandler {
           prefiltering: 'HP:0.1Hz LP:100Hz',
           physicalMin: -187500,
           physicalMax: 187500,
-          digitalMin: -8388608,
-          digitalMax: 8388607
+          // Use 16-bit compatible values for EDFbrowser compatibility
+          digitalMin: -32768,
+          digitalMax: 32767
         });
       }
 
@@ -479,14 +516,21 @@ class BrainflowDataHandler {
           throw new Error('No valid EEG data to write to BDF file');
         }
         
-        // Create BDF writer with proper configuration
-        log.info('Creating BDF writer');
+        // Create BDF writer with the actual recording duration
+        // The total data records was calculated above based on recording length
+        log.info(`Creating BDF writer with ${totalDataRecords} data records`);
+        
         this.bdfWriter = new BDFWriter({
           channels: channelConfig,
           samplingRate: this.samplingRate,
           subjectId: this.subjectId,
           recordingId: this.recordingId,
-          startDate: this.recordingStartTime
+          startDate: this.recordingStartTime,
+          // Use exact number of data records based on recording duration
+          dataRecords: totalDataRecords,
+          // Use standard BDF format (not BDF+) with BIOSEMI header
+          isBDFPlus: false,
+          isContinuous: true
         });
         
         // Write data to BDF file
