@@ -285,19 +285,32 @@ ipcMain.handle('disconnect-device', async () => {
 
 ipcMain.handle('start-recording', async (event, config) => {
   try {
-    isRecording = true;
-    recordingStartTime = new Date();
-    recordingData = [];
-    
     // Store the recording configuration for later use
     recordingConfig = config;
     
     log.info('Starting recording with config:', config);
-    // TODO: Implement Brainflow session start
-    // This is a placeholder - we'll implement the actual Brainflow code later
     
-    updateMenu();
-    return { success: true, message: 'Recording started' };
+    // Call BrainflowDataHandler to start recording
+    if (!brainflowHandler) {
+      return { success: false, message: 'No device handler initialized' };
+    }
+    
+    // Start the actual recording through BrainflowDataHandler
+    const result = await brainflowHandler.startRecording(config);
+    
+    if (result.success) {
+      // Set recording flags after successful start
+      isRecording = true;
+      recordingStartTime = result.startTime || new Date();
+      recordingData = [];
+      
+      log.info(`Recording started successfully at ${recordingStartTime}`);
+      updateMenu();
+      return { success: true, message: 'Recording started' };
+    } else {
+      log.error('Failed to start recording:', result.message);
+      return { success: false, message: result.message };
+    }
   } catch (error) {
     log.error('Error starting recording:', error);
     return { success: false, message: error.message };
@@ -305,34 +318,36 @@ ipcMain.handle('start-recording', async (event, config) => {
 });
 
 // Function to save recording data to a file
-function saveRecordingFile(config, options) {
+async function saveRecordingFile(config, options) {
   try {
-    // Create a default save location in Documents folder
-    // Using a fixed path to avoid dependency on app.getPath
-    const documentsPath = path.join(process.env.USERPROFILE || process.env.HOME, 'Documents');
-    const saveLocation = config?.saveLocation || path.join(documentsPath, 'ACErec Recordings');
+    log.info('Saving recording file with config:', config);
     
-    log.info(`Saving recording to: ${saveLocation}`);
+    // Configure save location
+    let saveLocation = config?.saveLocation || path.join(app.getPath('documents'), 'ACErec Recordings');
     
-    // Create the directory if it doesn't exist
+    // Ensure directory exists
     if (!fs.existsSync(saveLocation)) {
-      log.info(`Creating directory: ${saveLocation}`);
       fs.mkdirSync(saveLocation, { recursive: true });
     }
     
-    // Create a timestamp for the filename
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const subjectId = config?.subjectId || 'Unknown';
-    const recordingId = config?.recordingId || `Recording_${timestamp}`;
+    // Set configuration for BDF file creation
+    const saveOptions = {
+      format: options.format || 'BDF',
+      saveLocation: saveLocation,
+      subjectId: config?.subjectId || 'Unknown',
+      recordingId: config?.recordingId || `Recording_${new Date().toISOString().replace(/[:.]/g, '-')}`
+    };
     
-    // Create a placeholder BDF file (just a text file for now)
-    const filePath = path.join(saveLocation, `${subjectId}_${recordingId}.txt`);
-    const fileContent = `Placeholder BDF file\nRecording date: ${new Date().toString()}\nFormat: ${options.format || 'BDF'}\nChannels: ${config?.channelCount || 32}\nSampling rate: ${config?.samplingRate || 512} Hz`;
+    // Use BrainflowDataHandler to stop recording and save the actual BDF file
+    const result = await brainflowHandler.stopRecording(saveOptions);
     
-    fs.writeFileSync(filePath, fileContent);
-    log.info(`File saved to: ${filePath}`);
-    
-    return { success: true, path: filePath };
+    if (result.success) {
+      log.info(`BDF file saved to: ${result.filePath}`);
+      return { success: true, path: result.filePath };
+    } else {
+      log.error('Error saving BDF file:', result.message);
+      return { success: false, error: result.message };
+    }
   } catch (error) {
     log.error('Error saving recording file:', error);
     return { success: false, error: error.message };
@@ -341,22 +356,41 @@ function saveRecordingFile(config, options) {
 
 ipcMain.handle('stop-recording', async (event, saveOptions) => {
   try {
-    if (!isRecording) {
-      return { success: false, message: 'No recording in progress' };
+    // Check if brainflowHandler exists and has an active recording
+    if (!brainflowHandler) {
+      return { success: false, message: 'No device handler initialized' };
     }
     
+    // Set our local recording state to false
+    const wasRecording = isRecording;
     isRecording = false;
+    
     log.info('Stopping recording with options:', saveOptions);
+    updateMenu();
+    
+    // If we weren't recording according to our local state, log a warning but continue
+    // since brainflowHandler might still have an active recording
+    if (!wasRecording) {
+      log.warn('Local recording state was false, but attempting to stop recording anyway');
+    }
     
     // Save the recording data to a file
-    const saveResult = saveRecordingFile(recordingConfig, saveOptions);
+    const saveResult = await saveRecordingFile(recordingConfig, saveOptions);
     
-    updateMenu();
+    // Log the complete result for debugging
+    log.info('Save recording result:', saveResult);
     
     if (saveResult.success) {
       return { success: true, message: `Recording stopped and saved to ${saveResult.path}` };
     } else {
-      return { success: false, message: `Recording stopped but failed to save: ${saveResult.error}` };
+      // If we get 'No recording in progress' error, provide a more helpful message
+      if (saveResult.error && saveResult.error.includes('No recording in progress')) {
+        return { 
+          success: false, 
+          message: `No active recording was found in the data handler. Try starting a new recording first.` 
+        };
+      }
+      return { success: false, message: `Recording stopped but failed to save: ${saveResult.error || 'Unknown error'}` };
     }
   } catch (error) {
     log.error('Error stopping recording:', error);

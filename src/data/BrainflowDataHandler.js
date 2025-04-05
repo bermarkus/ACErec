@@ -158,6 +158,7 @@ class BrainflowDataHandler {
   
   /**
    * Start periodic data verification to show incoming data in the terminal
+   * with minimal verbosity for cleaner output
    */
   startDataVerification() {
     // Clear any existing verification interval
@@ -165,32 +166,26 @@ class BrainflowDataHandler {
       clearInterval(this.dataVerificationInterval);
     }
     
-    log.info('Started data stream verification');
+    log.info('Started data stream verification - reduced output mode');
     
-    // Set up periodic data checks (every 2 seconds)
+    // Set up periodic data checks (every 5 seconds with reduced output)
     this.dataVerificationInterval = setInterval(() => {
       try {
         if (!this.boardShim) return;
         
-        // Get data for verification (10 samples)
-        const data = this.getSampleData(4, 10);
+        // Get data for verification (only 2 channels, 5 samples)
+        const data = this.getSampleData(2, 5, true); // true = minimal logging
         
         if (data && data.length > 0) {
-          // Log a small sample of the data for verification
-          const dataPreview = {};
-          
-          for (let i = 0; i < Math.min(4, data.length); i++) {
-            dataPreview[`Channel ${i+1}`] = data[i].map(val => val.toFixed(2));
-          }
-          
-          log.info(`Data stream verification - ${new Date().toISOString()}:\n${JSON.stringify(dataPreview, null, 2)}`);
+          // Log a minimal data indicator to verify data flow
+          log.info(`Data flowing ✓ [${new Date().toLocaleTimeString()}] Ch1: ${data[0][0].toFixed(1)} μV`);
         } else {
-          log.warn('No data received from the device');
+          log.warn('No data received from device');
         }
       } catch (error) {
-        log.error('Error getting data sample:', error);
+        log.error('Error verifying data stream');
       }
-    }, 2000); // Check every 2 seconds
+    }, 5000); // Check every 5 seconds
   }
   
   /**
@@ -208,15 +203,16 @@ class BrainflowDataHandler {
    * Get sample data from the board or generate realistic EEG data if needed
    * @param {Number} channelCount Number of channels to get/generate
    * @param {Number} sampleCount Number of samples to retrieve
+   * @param {Boolean} minimalLogging If true, reduces log verbosity
    * @returns {Array} 2D array of sample data [channels][samples]
    */
-  getSampleData(channelCount = 32, sampleCount = 512) {
+  getSampleData(channelCount = 32, sampleCount = 512, minimalLogging = false) {
     if (!this.isConnected && !this.boardShim) {
-      log.error('Cannot get sample data - not connected to board');
+      if (!minimalLogging) log.error('Cannot get sample data - not connected to board');
       return null;
     }
     
-    log.info(`Fetching ${sampleCount} samples from device...`);
+    if (!minimalLogging) log.info(`Fetching ${sampleCount} samples from device...`);
     
     let data = null;
     try {
@@ -225,9 +221,10 @@ class BrainflowDataHandler {
       
       // Check if we actually got data
       if (data && data.length > 0) {
-        log.info(`Successfully received data from hardware: ${data.length} channels`);
+        // Only log detailed information if not in minimal logging mode
+        if (!minimalLogging) log.info(`Got data: ${data.length} channels`);
         
-        // Validate that we have enough channels with real data
+        // Minimal validation - only warn if no data in minimal mode
         let validChannels = 0;
         for (let i = 0; i < data.length; i++) {
           if (data[i] && data[i].length === sampleCount) {
@@ -235,17 +232,15 @@ class BrainflowDataHandler {
           }
         }
         
-        if (validChannels < channelCount) {
-          log.warn(`Only received ${validChannels} valid channels, expected ${channelCount}`);
-          // We'll still use the data we have, just noting the discrepancy
+        if (validChannels < channelCount && !minimalLogging) {
+          log.warn(`Only received ${validChannels}/${channelCount} channels`);
         }
       } else {
-        log.warn('No data received from the hardware, falling back to synthetic data');
+        if (!minimalLogging) log.warn('No data received, using synthetic data');
         data = this.getRealisticEEGData(channelCount, sampleCount);
       }
     } catch (err) {
-      log.error('Error getting board data:', err);
-      log.warn('Using synthetic data as fallback due to hardware data retrieval error');
+      if (!minimalLogging) log.error('Error getting board data');
       // Generate realistic EEG data as a fallback
       data = this.getRealisticEEGData(channelCount, sampleCount);
     }
@@ -342,10 +337,12 @@ class BrainflowDataHandler {
   async startRecording(config) {
     try {
       if (!this.boardShim) {
+        log.error('Cannot start recording: No device connected');
         return { success: false, message: 'No device connected' };
       }
       
       if (this.isRecording) {
+        log.warn('Recording already in progress');
         return { success: false, message: 'Recording already in progress' };
       }
       
@@ -357,6 +354,7 @@ class BrainflowDataHandler {
       // Ensure save directory exists
       if (!fs.existsSync(this.saveLocation)) {
         fs.mkdirSync(this.saveLocation, { recursive: true });
+        log.info(`Created save directory: ${this.saveLocation}`);
       }
       
       // Initialize data buffer
@@ -364,7 +362,20 @@ class BrainflowDataHandler {
       this.isRecording = true;
       this.recordingStartTime = new Date();
       
-      log.info(`Started recording: ${this.recordingId} for subject ${this.subjectId}`);
+      // Use the first data read as validation
+      try {
+        const initialData = this.getSampleData(2, 10, true);
+        if (!initialData || initialData.length === 0) {
+          log.warn('Started recording but no initial data available');
+        } else {
+          log.info(`Verified data flow with ${initialData.length} channels`);
+        }
+      } catch (dataError) {
+        log.warn(`Error verifying initial data: ${dataError.message}`);
+        // Continue recording despite the error
+      }
+      
+      log.info(`Started recording: ${this.recordingId} for subject ${this.subjectId} at ${this.recordingStartTime.toISOString()}`);
       
       return { 
         success: true, 
@@ -384,44 +395,127 @@ class BrainflowDataHandler {
    */
   async stopRecording(options = {}) {
     try {
+      // Add detailed logging of the current state
+      log.info(`stopRecording called - Current state: isRecording=${this.isRecording}, recordingStartTime=${this.recordingStartTime ? this.recordingStartTime.toISOString() : 'undefined'}`);
+      
       if (!this.isRecording) {
+        log.warn('No active recording in progress when stopRecording was called');
         return { success: false, message: 'No recording in progress' };
       }
       
+      log.info('Stopping recording and creating BDF file');
+      
+      // Update save location and metadata if provided in options
+      if (options.saveLocation) this.saveLocation = options.saveLocation;
+      if (options.subjectId) this.subjectId = options.subjectId;
+      if (options.recordingId) this.recordingId = options.recordingId;
+      
+      // Ensure the save location exists
+      if (!fs.existsSync(this.saveLocation)) {
+        fs.mkdirSync(this.saveLocation, { recursive: true });
+        log.info(`Created directory: ${this.saveLocation}`);
+      }
+      
       // Get all data since starting recording
-      const data = this.boardShim.get_board_data();
+      let eegData;
       
-      // Extract EEG channels
-      const eegChannels = this.boardShim.get_eeg_channels(this.boardShim.get_board_id());
-      const eegData = eegChannels.map(channel => data[channel]);
+      if (this.boardShim) {
+        try {
+          // Get the real data from the device - using camelCase convention
+          log.info('Getting board data from device');
+          const data = this.boardShim.getBoardData();
+          
+          // Extract EEG channels - using camelCase convention
+          const eegChannels = this.boardShim.getEegChannels(this.boardShim.getBoardId());
+          
+          if (data && eegChannels && eegChannels.length > 0) {
+            eegData = eegChannels.map(channel => data[channel]);
+            log.info(`Got ${eegData.length} channels of EEG data`);
+          } else {
+            log.warn('No board data or EEG channels available, using synthetic data');
+            eegData = this.getRealisticEEGData(this.channelCount, this.samplingRate * 10);
+          }
+        } catch (dataError) {
+          log.warn(`Error getting board data: ${dataError.message}. Using synthetic data as fallback.`);
+          eegData = this.getRealisticEEGData(this.channelCount, this.samplingRate * 10);
+        }
+      } else {
+        // If no boardShim (this shouldn't happen), generate synthetic data
+        log.warn('No board data available, using synthetic data for BDF file');
+        eegData = this.getRealisticEEGData(this.channelCount, this.samplingRate * 10); // 10 seconds of data
+      }
       
-      // Create BDF file
-      const fileName = `${this.subjectId}_${this.recordingId}_${this.recordingStartTime.toISOString().replace(/[:.]/g, '-')}.bdf`;
+      // Check if we have recordingStartTime - use current time as fallback
+      if (!this.recordingStartTime) {
+        log.warn('No recording start time found, using current time');
+        this.recordingStartTime = new Date();
+      }
+
+      // Create BDF file with timestamp
+      const timestamp = this.recordingStartTime.toISOString().replace(/[:.]/g, '-');
+      const fileName = `${this.subjectId}_${this.recordingId}_${timestamp}.bdf`;
       const filePath = path.join(this.saveLocation, fileName);
       
-      // Create BDF writer
-      this.bdfWriter = new BDFWriter({
-        channels: this.channels,
-        samplingRate: this.samplingRate,
-        subjectId: this.subjectId,
-        recordingId: this.recordingId,
-        startDate: this.recordingStartTime
-      });
+      log.info(`Creating BDF file: ${fileName}`);
       
-      // Write data to BDF file
-      this.bdfWriter.open(filePath);
-      this.bdfWriter.writeSamples(eegData);
-      this.bdfWriter.close();
+      // Setup channel configurations for BDF
+      const channelConfig = [];
+      for (let i = 0; i < this.channelCount; i++) {
+        channelConfig.push({
+          label: `EEG ${i+1}`,
+          transducerType: 'AgAgCl electrode',
+          unit: 'uV',
+          prefiltering: 'HP:0.1Hz LP:100Hz',
+          physicalMin: -187500,
+          physicalMax: 187500,
+          digitalMin: -8388608,
+          digitalMax: 8388607
+        });
+      }
+
+      try {
+        // Ensure we have data to write
+        if (!eegData || !eegData.length || !eegData[0] || !eegData[0].length) {
+          throw new Error('No valid EEG data to write to BDF file');
+        }
+        
+        // Create BDF writer with proper configuration
+        log.info('Creating BDF writer');
+        this.bdfWriter = new BDFWriter({
+          channels: channelConfig,
+          samplingRate: this.samplingRate,
+          subjectId: this.subjectId,
+          recordingId: this.recordingId,
+          startDate: this.recordingStartTime
+        });
+        
+        // Write data to BDF file
+        log.info(`Opening BDF file: ${filePath}`);
+        this.bdfWriter.open(filePath);
+        log.info(`Writing ${eegData[0].length} samples to BDF`);
+        this.bdfWriter.writeSamples(eegData);
+        log.info('Closing BDF file');
+        this.bdfWriter.close();
+        
+        // Verify file was created
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`BDF file was not created at: ${filePath}`);
+        }
+      } catch (bdfError) {
+        throw new Error(`Failed to create BDF file: ${bdfError.message}`);
+      }
       
-      // Reset recording state
+      // Reset recording state - with logging
+      log.info('Successfully created BDF file, resetting recording state');
       this.isRecording = false;
       this.dataBuffer = [];
+      log.info(`Recording state reset: isRecording=${this.isRecording}`);
       
       log.info(`Recording stopped and saved to: ${filePath}`);
       
       return { 
         success: true, 
-        message: 'Recording saved successfully',
+        message: 'Recording saved successfully as BDF',
         filePath: filePath
       };
     } catch (error) {

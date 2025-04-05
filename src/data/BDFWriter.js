@@ -19,8 +19,8 @@ class BDFWriter {
     this.duration = options.duration || -1; // Will be calculated based on data
     
     // BDF specific parameters
-    this.fileVersion = '0       '; // 8 chars, BIOSEMI format
-    this.dataFormat = '24BIT'; 
+    this.fileVersion = '0       '; // 8 chars, version of data format
+    this.dataFormat = '24BIT'; // 24-bit format identifier (used in reserved field)
     this.dataRecordDuration = 1; // in seconds
     
     // Internal state
@@ -199,8 +199,10 @@ class BDFWriter {
     headerBuffer.write(this.headerSize.toString().padEnd(8, ' '), offset, 8);
     offset += 8;
     
-    // 44 bytes: Reserved for BDF+ data
-    headerBuffer.write('BIOSEMI'.padEnd(44, ' '), offset, 44);
+    // 44 bytes: Reserved field - for BDF format, should begin with "24BIT"
+    // The first 8 bytes should identify the data format (24BIT for BDF)
+    // The rest should be reserved/empty (spaces)
+    headerBuffer.write('24BIT   '.padEnd(44, ' '), offset, 44);
     offset += 44;
     
     // 8 bytes: Number of data records
