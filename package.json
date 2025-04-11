@@ -22,8 +22,10 @@
   "license": "MIT",
   "dependencies": {
     "brainflow": "^5.0.0",
+    "chart.js": "^4.4.8",
     "electron-log": "^4.4.8",
     "express": "^4.18.2",
+    "serialport": "^13.0.0",
     "socket.io": "^4.6.1"
   },
   "devDependencies": {
@@ -43,10 +45,16 @@
     },
     "mac": {
       "category": "public.app-category.medical",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
-      "target": ["nsis", "zip"]
+      "target": [
+        "nsis",
+        "zip"
+      ]
     }
   }
 }

@@ -44,6 +44,13 @@ const appState = {
     channelCount: 32,
     autoSave: true,
     defaultSaveLocation: ''
+  },
+  visualization: {
+    chart: null,
+    data: [],
+    timeAxis: [],
+    channelColors: [],
+    displaySeconds: 10
   }
 };
 
@@ -323,9 +330,54 @@ async function saveSettings() {
 
 // Handle device data (for visualization)
 function handleDeviceData(data) {
-  // This would update the EEG visualization with new data
-  // Implementation would depend on the visualization library used
-  console.log('Received device data:', data);
+  if (!data || !data.data || !data.data.length) {
+    console.error('Invalid data received:', data);
+    return;
+  }
+  
+  console.log(`Received data: ${data.data.length} channels, ${data.data[0].length} samples`);
+  
+  // Debug: Log a sample of the data
+  if (data.data.length > 0 && data.data[0].length > 0) {
+    console.log(`Sample data values (first channel): ${data.data[0].slice(0, 5)}`);
+    
+    // Check for non-zero values
+    let hasNonZeroValues = false;
+    for (let i = 0; i < data.data.length && !hasNonZeroValues; i++) {
+      for (let j = 0; j < data.data[i].length && !hasNonZeroValues; j++) {
+        if (Math.abs(data.data[i][j]) > 0.01) {
+          hasNonZeroValues = true;
+          break;
+        }
+      }
+    }
+    
+    if (!hasNonZeroValues) {
+      console.warn('Warning: All data values are close to zero. Visualization may not be visible.');
+    }
+  }
+  
+  // Update the data in the application state
+  appState.visualization.data = data.data;
+  
+  // Generate time axis based on sampling rate
+  const samplingRate = data.samplingRate;
+  const numSamples = data.data[0].length;
+  
+  // Create time axis (in seconds)
+  appState.visualization.timeAxis = Array.from(
+    { length: numSamples },
+    (_, i) => i / samplingRate
+  );
+  
+  // If we don't have a chart yet, initialize it
+  if (!appState.visualization.chart) {
+    console.log('Chart not initialized, initializing now...');
+    initializeVisualization();
+  }
+  
+  // Update the visualization
+  updateVisualization();
 }
 
 // Handle recording status updates from main process
@@ -439,15 +491,223 @@ function formatDuration(ms) {
 
 // Initialize EEG visualization
 function initializeVisualization() {
-  // This would set up the EEG visualization using a charting library
-  // For now, just display a placeholder message
-  elements.eegVisualization.innerHTML = `
-    <div style="text-align: center; padding: 20px;">
-      <p>EEG Visualization Initialized</p>
-      <p>Channel Count: ${appState.settings.channelCount}</p>
-      <p>Sampling Rate: ${elements.samplingRateSelect.value} Hz</p>
-    </div>
-  `;
+  console.log('Initializing EEG visualization');
+  
+  // Clear the visualization container
+  elements.eegVisualization.innerHTML = '<canvas id="eeg-canvas"></canvas>';
+  
+  // Generate colors for each channel
+  generateChannelColors(appState.settings.channelCount);
+  
+  // Get the canvas element
+  const canvas = document.getElementById('eeg-canvas');
+  if (!canvas) {
+    console.error('Canvas element not found');
+    return;
+  }
+  
+  // Create datasets for each channel
+  const datasets = [];
+  for (let i = 0; i < appState.settings.channelCount; i++) {
+    datasets.push({
+      label: `Channel ${i + 1}`,
+      data: [],
+      borderColor: appState.visualization.channelColors[i],
+      borderWidth: 1.5,
+      fill: false,
+      tension: 0.1,
+      pointRadius: 0
+    });
+  }
+  
+  console.log(`Created ${datasets.length} datasets for visualization`);
+  
+  // Create the chart
+  try {
+    // Add a simple dataset with test data to verify the chart works
+    const testData = [
+      { x: 0, y: 0 },
+      { x: 1, y: 100 },
+      { x: 2, y: -100 },
+      { x: 3, y: 50 },
+      { x: 4, y: -50 },
+      { x: 5, y: 0 }
+    ];
+    
+    datasets[0].data = testData;
+    console.log('Added test data to first dataset');
+    
+    appState.visualization.chart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        datasets: datasets
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        elements: {
+          line: {
+            tension: 0.1
+          },
+          point: {
+            radius: 0
+          }
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            position: 'bottom',
+            title: {
+              display: true,
+              text: 'Time (seconds)'
+            },
+            ticks: {
+              maxTicksLimit: 10
+            },
+            min: 0,
+            max: 10
+          },
+          y: {
+            type: 'linear',
+            position: 'left',
+            title: {
+              display: true,
+              text: 'Amplitude (\u03bcV)'
+            },
+            beginAtZero: false,
+            grace: '10%',
+            ticks: {
+              precision: 0
+            },
+            // Let Chart.js determine the min/max automatically
+            min: undefined,
+            max: undefined,
+            // Ensure the axis adapts to the data
+            adapters: {
+              autoSkip: true
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'right',
+            labels: {
+              boxWidth: 12,
+              font: {
+                size: 10
+              }
+            }
+          },
+          tooltip: {
+            enabled: false
+          }
+        }
+      }
+    });
+    console.log('Chart initialized successfully with auto-scaling Y axis');
+  } catch (error) {
+    console.error('Error initializing chart:', error);
+  }
+}
+
+// Generate colors for each channel
+function generateChannelColors(channelCount) {
+  appState.visualization.channelColors = [];
+  
+  // Generate a color for each channel
+  for (let i = 0; i < channelCount; i++) {
+    // Use HSL to generate evenly distributed colors
+    const hue = (i * 360 / channelCount) % 360;
+    const color = `hsl(${hue}, 70%, 50%)`;
+    appState.visualization.channelColors.push(color);
+  }
+}
+
+// Update the visualization with new data
+function updateVisualization() {
+  // If chart is not initialized or no data, return
+  if (!appState.visualization.chart || !appState.visualization.data.length) {
+    console.warn('Cannot update visualization: chart not initialized or no data');
+    return;
+  }
+  
+  const chart = appState.visualization.chart;
+  const data = appState.visualization.data;
+  const timeAxis = appState.visualization.timeAxis;
+  
+  // Debug: Log data dimensions and check for valid data
+  console.log(`Updating chart with ${data.length} channels, ${timeAxis.length} time points`);
+  
+  // Check data ranges to ensure we have visible data
+  let minValue = Infinity;
+  let maxValue = -Infinity;
+  for (let i = 0; i < data.length; i++) {
+    for (let j = 0; j < data[i].length; j++) {
+      if (data[i][j] < minValue) minValue = data[i][j];
+      if (data[i][j] > maxValue) maxValue = data[i][j];
+    }
+  }
+  console.log(`Data range: min=${minValue}, max=${maxValue}`);
+  
+  // Only proceed if we have valid data range
+  if (minValue === Infinity || maxValue === -Infinity) {
+    console.warn('No valid data range detected');
+    return;
+  }
+  
+  // Clear existing data to prevent potential issues
+  chart.data.datasets.forEach((dataset) => {
+    dataset.data = [];
+  });
+  
+  // Update the data for each channel
+  for (let i = 0; i < data.length && i < chart.data.datasets.length; i++) {
+    // Create data points in the format Chart.js expects
+    const points = [];
+    for (let j = 0; j < data[i].length && j < timeAxis.length; j++) {
+      // Skip any NaN or undefined values
+      const value = data[i][j];
+      if (value !== undefined && !isNaN(value)) {
+        points.push({
+          x: timeAxis[j],
+          y: value
+        });
+      }
+    }
+    
+    // Debug: Log a sample of the points
+    if (i === 0) {
+      console.log(`Channel 1 sample points: ${JSON.stringify(points.slice(0, 3))}`);
+      console.log(`Channel 1 data length: ${points.length}`);
+    }
+    
+    chart.data.datasets[i].data = points;
+  }
+  
+  // Force chart to redraw with updated data
+  try {
+    // Update chart options to ensure auto-scaling works
+    chart.options.scales.y.min = undefined;
+    chart.options.scales.y.max = undefined;
+    
+    // Set a reasonable suggested min/max based on data
+    // Add some padding to the min/max to ensure data is visible
+    const range = maxValue - minValue;
+    const padding = range * 0.1; // 10% padding
+    
+    if (range > 0) {
+      chart.options.scales.y.suggestedMin = minValue - padding;
+      chart.options.scales.y.suggestedMax = maxValue + padding;
+    }
+    
+    // Update the chart with no animation for better performance
+    chart.update('none');
+    console.log('Chart updated successfully');
+  } catch (error) {
+    console.error('Error updating chart:', error);
+  }
 }
 
 // Initialize the application when DOM is loaded

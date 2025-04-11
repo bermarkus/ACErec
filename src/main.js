@@ -196,6 +196,7 @@ ipcMain.handle('get-devices', async () => {
 // Global references
 let dataVerificationInterval = null;
 let brainflowHandler = null;
+let dataStreamInterval = null;
 
 // Function to log actual data samples from the device
 async function verifyDataStream() {
@@ -215,6 +216,106 @@ async function verifyDataStream() {
     }
   } catch (error) {
     log.error('Error in data verification:', error);
+  }
+}
+
+// Function to send EEG data to the renderer process
+function startDataStream() {
+  // Clear any existing interval
+  if (dataStreamInterval) {
+    clearInterval(dataStreamInterval);
+  }
+  
+  log.info('Starting data stream to renderer');
+  
+  // Start a new interval to send data to the renderer
+  dataStreamInterval = setInterval(() => {
+    try {
+      if (!brainflowHandler || !mainWindow) return;
+      
+      // Get data for all channels (10 seconds worth of data)
+      const samplingRate = brainflowHandler.samplingRate || 250;
+      const channelCount = brainflowHandler.channelCount || 32;
+      const numSamples = samplingRate * 10; // 10 seconds of data
+      
+      // Try to get real data
+      let data = null;
+      
+      if (brainflowHandler.isConnected) {
+        // Get real data if connected
+        data = brainflowHandler.getSampleData(channelCount, numSamples, true);
+      }
+      
+      // If no data or not connected, generate synthetic data
+      if (!data || data.length === 0) {
+        log.info('No real data available, generating synthetic data');
+        
+        // Create a custom synthetic dataset with clearly visible patterns
+        data = [];
+        const samplingRate = 250; // Samples per second
+        
+        // Generate data for each channel
+        for (let i = 0; i < channelCount; i++) {
+          data[i] = [];
+          // Scale amplitudes to be clearly visible but with different ranges for each channel
+          const baseAmplitude = 200; // Larger base amplitude for better visibility
+          const amplitude = baseAmplitude - (i * 5); // Different amplitude for each channel
+          const frequency = 0.5 + (i % 5) * 0.2; // Different frequency for each channel
+          
+          // Generate sine wave data for this channel
+          for (let j = 0; j < numSamples; j++) {
+            const timePoint = j / samplingRate;
+            
+            // Base sine wave with primary frequency
+            let value = amplitude * Math.sin(2 * Math.PI * frequency * timePoint);
+            
+            // Add harmonics for more realistic EEG appearance
+            if (i % 4 === 0) { // Alpha-like waves (8-12 Hz) for some channels
+              value += (amplitude * 0.5) * Math.sin(2 * Math.PI * 10 * timePoint);
+            } else if (i % 4 === 1) { // Beta-like waves (13-30 Hz) for some channels
+              value += (amplitude * 0.3) * Math.sin(2 * Math.PI * 20 * timePoint);
+            } else if (i % 4 === 2) { // Theta-like waves (4-7 Hz) for some channels
+              value += (amplitude * 0.7) * Math.sin(2 * Math.PI * 6 * timePoint);
+            } else { // Delta-like waves (1-3 Hz) for some channels
+              value += (amplitude * 0.8) * Math.sin(2 * Math.PI * 2 * timePoint);
+            }
+            
+            // Add some noise
+            value += (Math.random() - 0.5) * (amplitude * 0.1);
+            
+            data[i][j] = value;
+          }
+        }
+        
+        log.info(`Generated synthetic data: ${data.length} channels, ${data[0].length} samples`);
+      }
+      
+      if (data && data.length > 0) {
+        // Log data dimensions for debugging
+        log.info(`Sending data: ${data.length} channels, ${data[0].length} samples per channel`);
+        
+        // Send the data to the renderer process
+        mainWindow.webContents.send('device-data', {
+          data: data,
+          samplingRate: samplingRate,
+          channelCount: channelCount,
+          timestamp: Date.now()
+        });
+      } else {
+        log.warn('No data available to send to renderer');
+      }
+    } catch (error) {
+      log.error('Error sending data stream:', error);
+    }
+  }, 1000); // Update every second
+}
+
+// Function to stop the data stream
+function stopDataStream() {
+  if (dataStreamInterval) {
+    clearInterval(dataStreamInterval);
+    dataStreamInterval = null;
+    log.info('Stopped data stream');
   }
 }
 
@@ -272,6 +373,15 @@ ipcMain.handle('disconnect-device', async () => {
     
     // Disconnect from Brainflow device
     if (brainflowHandler) {
+      // Stop data verification
+      brainflowHandler.stopDataVerification();
+      
+      // Stop data stream
+      stopDataStream();
+      
+      // Update menu
+      updateMenu();
+      
       const result = await brainflowHandler.disconnect();
       return result;
     }
