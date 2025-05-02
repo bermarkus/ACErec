@@ -210,7 +210,19 @@ async function verifyDataStream() {
     const data = await brainflowHandler.getSampleData(4, 10); // 4 channels, 10 samples per channel
     
     if (data && Object.keys(data).length > 0) {
-      log.info(`Data stream verification - ${new Date().toISOString()}:\n${JSON.stringify(data, null, 2)}`);
+      // Only log a brief summary of the data
+      const channelCount = Object.keys(data).length;
+      const sampleCount = data[Object.keys(data)[0]]?.length || 0;
+      
+      // Get the first channel data as a sample (first 3 values only)
+      let sampleData = "";
+      if (channelCount > 0 && sampleCount > 0) {
+        const firstChannel = Object.keys(data)[1]; // Use the second channel which usually has meaningful data
+        const samples = data[firstChannel].slice(0, 3);
+        sampleData = `Sample values: ${JSON.stringify(samples)}`;
+      }
+      
+      log.info(`Data flowing at ${new Date().toLocaleTimeString()} - ${channelCount} channels, ${sampleCount} samples. ${sampleData}`);
     } else {
       log.warn('No data received from device');
     }
@@ -234,9 +246,9 @@ function startDataStream() {
       if (!brainflowHandler || !mainWindow) return;
       
       // Get data for all channels (10 seconds worth of data)
-      const samplingRate = brainflowHandler.samplingRate || 250;
+      const samplingRate = brainflowHandler.samplingRate || 512; // Default to 512Hz for FreeEEG32
       const channelCount = brainflowHandler.channelCount || 32;
-      const numSamples = samplingRate * 10; // 10 seconds of data
+      const numSamples = samplingRate * 5; // 5 seconds of data (reduced for better performance)
       
       // Try to get real data
       let data = null;
@@ -291,8 +303,12 @@ function startDataStream() {
       }
       
       if (data && data.length > 0) {
-        // Log data dimensions for debugging
-        log.info(`Sending data: ${data.length} channels, ${data[0].length} samples per channel`);
+        // Only log data sending occasionally (every 5 seconds) to reduce console spam
+        const currentTime = Date.now();
+        if (!global.lastDataLogTime || (currentTime - global.lastDataLogTime) > 5000) {
+          log.info(`Sending data: ${data.length} channels, ${data[0].length} samples per channel`);
+          global.lastDataLogTime = currentTime;
+        }
         
         // Send the data to the renderer process
         mainWindow.webContents.send('device-data', {
@@ -307,7 +323,7 @@ function startDataStream() {
     } catch (error) {
       log.error('Error sending data stream:', error);
     }
-  }, 1000); // Update every second
+  }, 200); // Update 5 times per second for more responsive visualization
 }
 
 // Function to stop the data stream
@@ -464,7 +480,7 @@ async function saveRecordingFile(config, options) {
   }
 }
 
-ipcMain.handle('stop-recording', async (event, saveOptions) => {
+ipcMain.handle('stop-recording', async (event, saveOptions = {}) => {
   try {
     // Check if brainflowHandler exists and has an active recording
     if (!brainflowHandler) {
@@ -474,6 +490,11 @@ ipcMain.handle('stop-recording', async (event, saveOptions) => {
     // Set our local recording state to false
     const wasRecording = isRecording;
     isRecording = false;
+    
+    // Set default format to CSV if not specified
+    if (!saveOptions.format) {
+      saveOptions.format = 'CSV';
+    }
     
     log.info('Stopping recording with options:', saveOptions);
     updateMenu();
