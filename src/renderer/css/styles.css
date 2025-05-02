@@ -199,11 +199,118 @@ button:active {
   flex: 1;
   border: 1px solid var(--border-color);
   border-radius: 4px;
+  min-height: 300px;
   background-color: var(--background-light);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+}
+
+/* Channel Selection and Filters */
+.visualization-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.control-group {
+  flex: 1;
+  background-color: var(--background-light);
+  border-radius: 6px;
+  padding: 1rem;
+  min-width: 250px;
+}
+
+.control-group h3 {
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+  color: var(--primary-color);
+}
+
+/* Channel Selection */
+.channel-selector {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: white;
+}
+
+.channel-toggle-all {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.channel-toggle-all button {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.5rem;
+  flex: 1;
+}
+
+.channel-toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+.channel-toggle {
+  display: flex;
+  align-items: center;
+}
+
+.channel-toggle input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+.channel-toggle label {
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+/* Filters */
+.filter-section {
+  background-color: white;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+}
+
+.filter-section:last-child {
+  margin-bottom: 0;
+}
+
+.filter-header {
+  background-color: var(--background-medium);
+  padding: 0.5rem;
+  font-weight: 500;
+}
+
+.filter-controls {
+  padding: 0.8rem;
+}
+
+.filter-controls .form-group {
+  margin-bottom: 0.5rem;
+}
+
+.filter-controls label {
+  font-size: 0.9rem;
+}
+
+.filter-controls input[type="number"] {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+}
+
+.filter-controls select {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
 }
 
 .placeholder-message {

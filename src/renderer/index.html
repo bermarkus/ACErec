@@ -73,6 +73,7 @@
             <select id="sampling-rate">
               <option value="250">250</option>
               <option value="500">500</option>
+              <option value="512">512 (FreeEEG32)</option>
               <option value="1000">1000</option>
               <option value="2000">2000</option>
             </select>
@@ -82,6 +83,70 @@
 
       <section class="visualization-panel">
         <h2>EEG Visualization</h2>
+        
+        <div class="visualization-controls">
+          <div class="control-group">
+            <h3>Channel Selection</h3>
+            <div class="channel-selector" id="channel-selector">
+              <!-- Channels will be added dynamically -->
+              <div class="channel-toggle-all">
+                <button id="select-all-channels">Select All</button>
+                <button id="deselect-all-channels">Deselect All</button>
+              </div>
+              <div id="channel-toggles" class="channel-toggles">
+                <!-- Channel checkboxes will be added here -->
+              </div>
+            </div>
+          </div>
+          
+          <div class="control-group">
+            <h3>Filters</h3>
+            
+            <div class="filter-section">
+              <div class="filter-header">
+                <label>
+                  <input type="checkbox" id="bandpass-enabled">
+                  Bandpass Filter
+                </label>
+              </div>
+              <div class="filter-controls">
+                <div class="form-group">
+                  <label for="bandpass-low">Low Cutoff (Hz):</label>
+                  <input type="number" id="bandpass-low" min="0" max="200" step="0.5" value="1">
+                </div>
+                <div class="form-group">
+                  <label for="bandpass-high">High Cutoff (Hz):</label>
+                  <input type="number" id="bandpass-high" min="0" max="200" step="0.5" value="50">
+                </div>
+                <button id="apply-bandpass" disabled>Apply</button>
+              </div>
+            </div>
+            
+            <div class="filter-section">
+              <div class="filter-header">
+                <label>
+                  <input type="checkbox" id="notch-enabled">
+                  Notch Filter
+                </label>
+              </div>
+              <div class="filter-controls">
+                <div class="form-group">
+                  <label for="notch-freq">Frequency (Hz):</label>
+                  <select id="notch-freq">
+                    <option value="50">50 Hz (Europe/Asia)</option>
+                    <option value="60">60 Hz (Americas)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="notch-width">Width (Hz):</label>
+                  <input type="number" id="notch-width" min="1" max="10" step="0.5" value="5">
+                </div>
+                <button id="apply-notch" disabled>Apply</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
         <div id="eeg-visualization" class="visualization-container">
           <div class="placeholder-message">
             Connect to a device to view EEG data
@@ -142,6 +207,8 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="js/eeg-filters.js"></script>
+  <script src="js/eeg-functions.js"></script>
   <script src="js/renderer.js"></script>
 </body>
 </html>

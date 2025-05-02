@@ -50,7 +50,9 @@ const appState = {
     data: [],
     timeAxis: [],
     channelColors: [],
-    displaySeconds: 10
+    displaySeconds: 10,
+    filters: null,
+    visibleChannels: [] // Array to track visible channels
   }
 };
 
@@ -67,6 +69,9 @@ async function init() {
     console.error('Failed to load settings:', error);
   }
   
+  // Initialize EEG filters
+  appState.visualization.filters = new EEGFilters();
+  
   // Set up event listeners
   setupEventListeners();
   
@@ -75,6 +80,10 @@ async function init() {
   
   // Set up IPC listeners
   setupIPCListeners();
+  
+  // Disable filter buttons initially
+  document.getElementById('apply-bandpass').disabled = true;
+  document.getElementById('apply-notch').disabled = true;
 }
 
 // Set up event listeners for UI elements
@@ -93,6 +102,16 @@ function setupEventListeners() {
   elements.saveSettingsBtn.addEventListener('click', saveSettings);
   elements.cancelSettingsBtn.addEventListener('click', () => toggleModal('settings', false));
   elements.browseDefaultLocationBtn.addEventListener('click', browseDefaultSaveLocation);
+  
+  // Channel selection controls
+  document.getElementById('select-all-channels').addEventListener('click', selectAllChannels);
+  document.getElementById('deselect-all-channels').addEventListener('click', deselectAllChannels);
+  
+  // Filter controls
+  document.getElementById('bandpass-enabled').addEventListener('change', updateBandpassUI);
+  document.getElementById('notch-enabled').addEventListener('change', updateNotchUI);
+  document.getElementById('apply-bandpass').addEventListener('click', applyBandpassFilter);
+  document.getElementById('apply-notch').addEventListener('click', applyNotchFilter);
   
   // Close buttons for modals
   document.querySelectorAll('.close-btn').forEach(btn => {
@@ -156,11 +175,19 @@ async function connectDevice() {
     // Get the selected device
     appState.selectedDevice = appState.devices.find(device => device.id == deviceId);
     
+    // Auto-select 512Hz sampling rate for FreeEEG32 devices
+    if (appState.selectedDevice.name.includes('FreeEEG32')) {
+      // Set sampling rate dropdown to 512Hz
+      elements.samplingRateSelect.value = '512';
+      console.log('Auto-selected 512Hz sampling rate for FreeEEG32 device');
+    }
+    
     // Set up connection parameters
     const connectionParams = {
       samplingRate: parseInt(elements.samplingRateSelect.value),
       channelCount: appState.settings.channelCount,
-      name: appState.selectedDevice.name // Pass the device name for board type identification
+      name: appState.selectedDevice.name, // Pass the device name for board type identification
+      forceDataStreaming: true // Force data streaming even if no data is initially detected
     };
     
     // Connect to the device
@@ -178,6 +205,21 @@ async function connectDevice() {
       
       // Initialize visualization (this would be implemented with charting library)
       initializeVisualization();
+      
+      // Initialize the filters with the correct number of channels and sampling rate
+      if (appState.visualization.filters) {
+        appState.visualization.filters.initializeFilters(
+          appState.settings.channelCount,
+          parseInt(elements.samplingRateSelect.value)
+        );
+      }
+      
+      // Generate channel selection UI
+      generateChannelToggles(appState.settings.channelCount);
+      
+      // Enable filter application buttons
+      document.getElementById('apply-bandpass').disabled = !document.getElementById('bandpass-enabled').checked;
+      document.getElementById('apply-notch').disabled = !document.getElementById('notch-enabled').checked;
     } else {
       elements.deviceStatus.textContent = 'Connection failed';
       elements.connectBtn.disabled = false;
@@ -200,18 +242,47 @@ async function disconnectDevice() {
       await stopRecording();
     }
     
-    const result = await window.api.disconnectDevice();
+    // Send disconnect command to main process
+    await window.api.disconnectDevice();
     
+    // Update UI
     appState.isConnected = false;
     elements.deviceStatus.textContent = 'Not connected';
     elements.connectBtn.disabled = false;
     elements.disconnectBtn.disabled = true;
     elements.startRecordingBtn.disabled = true;
+    elements.stopRecordingBtn.disabled = true;
     
-    // Reset visualization
+    // Reset filter UI
+    document.getElementById('apply-bandpass').disabled = true;
+    document.getElementById('apply-notch').disabled = true;
+    
+    // Clear channel selection UI
+    document.getElementById('channel-toggles').innerHTML = '';
+    
+    // Reset visualization data
+    appState.visualization.data = [];
+    appState.visualization.timeAxis = [];
+    appState.visualization.visibleChannels = [];
+    
+    // Reset filters
+    if (appState.visualization.filters) {
+      appState.visualization.filters.resetFilters();
+    }
+    
+    // Clear visualization
+    if (appState.visualization.chart) {
+      appState.visualization.chart.destroy();
+      appState.visualization.chart = null;
+    }
+    
+    // Reset visualization container
     elements.eegVisualization.innerHTML = '<div class="placeholder-message">Connect to a device to view EEG data</div>';
+    
+    console.log('Device disconnected');
   } catch (error) {
-    console.error('Error disconnecting from device:', error);
+    console.error('Error disconnecting device:', error);
+    elements.deviceStatus.textContent = 'Error disconnecting';
     elements.disconnectBtn.disabled = false;
   }
 }
@@ -265,7 +336,7 @@ async function stopRecording() {
     
     // Prepare saving options
     const saveOptions = {
-      format: 'BDF',
+      format: 'CSV',
       includeAnnotations: true
     };
     
@@ -341,7 +412,7 @@ function handleDeviceData(data) {
   if (data.data.length > 0 && data.data[0].length > 0) {
     console.log(`Sample data values (first channel): ${data.data[0].slice(0, 5)}`);
     
-    // Check for non-zero values
+    // Check for non-zero values (but don't block processing if all zero)
     let hasNonZeroValues = false;
     for (let i = 0; i < data.data.length && !hasNonZeroValues; i++) {
       for (let j = 0; j < data.data[i].length && !hasNonZeroValues; j++) {
@@ -357,12 +428,36 @@ function handleDeviceData(data) {
     }
   }
   
+  // Ensure we have the expected data format and extract just the EEG channels
+  let eegData = data.data;
+  
+  // First 32 channels of FreeEEG32 are the EEG channels
+  // Only use the EEG channels for visualization
+  if (eegData.length > 32) {
+    // Use only the relevant EEG channels
+    console.log(`Using first ${appState.settings.channelCount} channels for EEG data`);
+    eegData = eegData.slice(0, appState.settings.channelCount);
+  }
+  
+  // Ensure that we have enough channels
+  while (eegData.length < appState.settings.channelCount) {
+    // Add empty channels if needed
+    const emptySamples = Array(eegData[0]?.length || 100).fill(0);
+    eegData.push(emptySamples);
+  }
+  
+  // Apply filters if they are enabled
+  let processedData = eegData;
+  if (appState.visualization.filters) {
+    processedData = processEEGData(eegData);
+  }
+  
   // Update the data in the application state
-  appState.visualization.data = data.data;
+  appState.visualization.data = processedData;
   
   // Generate time axis based on sampling rate
-  const samplingRate = data.samplingRate;
-  const numSamples = data.data[0].length;
+  const samplingRate = data.samplingRate || 512; // Default to 512Hz if not specified
+  const numSamples = eegData[0].length;
   
   // Create time axis (in seconds)
   appState.visualization.timeAxis = Array.from(
@@ -374,9 +469,14 @@ function handleDeviceData(data) {
   if (!appState.visualization.chart) {
     console.log('Chart not initialized, initializing now...');
     initializeVisualization();
+    
+    // Initialize the channel selection UI if not already done
+    if (document.getElementById('channel-toggles').children.length === 0) {
+      generateChannelToggles(appState.settings.channelCount);
+    }
   }
   
-  // Update the visualization
+  // Always update the visualization when data is received
   updateVisualization();
 }
 
@@ -636,19 +736,25 @@ function updateVisualization() {
   const chart = appState.visualization.chart;
   const data = appState.visualization.data;
   const timeAxis = appState.visualization.timeAxis;
+  const visibleChannels = appState.visualization.visibleChannels || Array.from({ length: data.length }, (_, i) => i);
   
   // Debug: Log data dimensions and check for valid data
-  console.log(`Updating chart with ${data.length} channels, ${timeAxis.length} time points`);
+  console.log(`Updating chart with ${data.length} channels, ${timeAxis.length} time points, ${visibleChannels.length} visible channels`);
   
   // Check data ranges to ensure we have visible data
   let minValue = Infinity;
   let maxValue = -Infinity;
-  for (let i = 0; i < data.length; i++) {
-    for (let j = 0; j < data[i].length; j++) {
-      if (data[i][j] < minValue) minValue = data[i][j];
-      if (data[i][j] > maxValue) maxValue = data[i][j];
+  
+  // Only check visible channels for data range
+  visibleChannels.forEach(channelIndex => {
+    const channelData = data[channelIndex];
+    if (channelData) {
+      for (let j = 0; j < channelData.length; j++) {
+        if (channelData[j] < minValue) minValue = channelData[j];
+        if (channelData[j] > maxValue) maxValue = channelData[j];
+      }
     }
-  }
+  });
   console.log(`Data range: min=${minValue}, max=${maxValue}`);
   
   // Only proceed if we have valid data range
@@ -657,34 +763,40 @@ function updateVisualization() {
     return;
   }
   
-  // Clear existing data to prevent potential issues
-  chart.data.datasets.forEach((dataset) => {
+  // First hide all datasets
+  chart.data.datasets.forEach((dataset, i) => {
+    dataset.hidden = true;
     dataset.data = [];
   });
   
-  // Update the data for each channel
-  for (let i = 0; i < data.length && i < chart.data.datasets.length; i++) {
-    // Create data points in the format Chart.js expects
-    const points = [];
-    for (let j = 0; j < data[i].length && j < timeAxis.length; j++) {
-      // Skip any NaN or undefined values
-      const value = data[i][j];
-      if (value !== undefined && !isNaN(value)) {
-        points.push({
-          x: timeAxis[j],
-          y: value
-        });
+  // Update the data for each visible channel
+  visibleChannels.forEach(channelIndex => {
+    if (channelIndex < data.length && channelIndex < chart.data.datasets.length) {
+      // Show this dataset
+      chart.data.datasets[channelIndex].hidden = false;
+      
+      // Create data points in the format Chart.js expects
+      const points = [];
+      for (let j = 0; j < data[channelIndex].length && j < timeAxis.length; j++) {
+        // Skip any NaN or undefined values
+        const value = data[channelIndex][j];
+        if (value !== undefined && !isNaN(value)) {
+          points.push({
+            x: timeAxis[j],
+            y: value
+          });
+        }
       }
+      
+      // Debug: Log a sample of the points for first channel
+      if (channelIndex === visibleChannels[0]) {
+        console.log(`First visible channel sample points: ${JSON.stringify(points.slice(0, 3))}`);
+        console.log(`First visible channel data length: ${points.length}`);
+      }
+      
+      chart.data.datasets[channelIndex].data = points;
     }
-    
-    // Debug: Log a sample of the points
-    if (i === 0) {
-      console.log(`Channel 1 sample points: ${JSON.stringify(points.slice(0, 3))}`);
-      console.log(`Channel 1 data length: ${points.length}`);
-    }
-    
-    chart.data.datasets[i].data = points;
-  }
+  });
   
   // Force chart to redraw with updated data
   try {
